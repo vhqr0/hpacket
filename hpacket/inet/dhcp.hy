@@ -29,7 +29,7 @@
         Release  7
         Inform   8))
 
-(define-opt-dict DHCPv4
+(define-opt-dict DHCPv4Opt
   [Pad           0
    End         255
    MsgType      53
@@ -72,23 +72,23 @@
    [chaddr MAC-ZERO] [pad (bytes 10)] [sname (bytes 64)] [file (bytes 128)]
    [magic DHCPv4-MAGIC] [opts #()]])
 
-(define-int-opt DHCPv4 MsgType 1 DHCPv4MsgType)
+(define-int-opt DHCPv4Opt MsgType 1 DHCPv4MsgType)
 
-(define-atom-struct-opt DHCPv4 ReqAddr IPv4Addr)
+(define-atom-struct-opt DHCPv4Opt ReqAddr IPv4Addr)
 
-(define-atom-struct-opt DHCPv4 ReqParam
+(define-atom-struct-opt DHCPv4Opt ReqParam
   [int params
    :len 1
    :repeat-while (async-wait (.peek reader))
    :to-each (normalize it DHCPv4Opt)])
 
-(define-int-opt DHCPv4 LeaseTime   4)
-(define-int-opt DHCPv4 RenewalTime 4)
-(define-int-opt DHCPv4 RebindTime  4)
+(define-int-opt DHCPv4Opt LeaseTime   4)
+(define-int-opt DHCPv4Opt RenewalTime 4)
+(define-int-opt DHCPv4Opt RebindTime  4)
 
-(define-atom-struct-opt DHCPv4 SubnetMask IPv4Addr)
-(define-atom-struct-opt DHCPv4 Router     IPv4Addrs)
-(define-atom-struct-opt DHCPv4 DNSServer  IPv4Addrs)
+(define-atom-struct-opt DHCPv4Opt SubnetMask IPv4Addr)
+(define-atom-struct-opt DHCPv4Opt Router     IPv4Addrs)
+(define-atom-struct-opt DHCPv4Opt DNSServer  IPv4Addrs)
 
 
 ;;; dhcpv6
@@ -108,7 +108,7 @@
         RelayForw 12
         RelayRepl 13))
 
-(define-opt-dict DHCPv6
+(define-opt-dict DHCPv6Opt
   [ClientID     1
    ServerID     2
    RelayMsg     9
@@ -140,39 +140,39 @@
    [struct [opts] :struct (async-name DHCPv6OptListStruct)]]
   [[type DHCPv6MsgType.Solicit] [xid 0] [opts #()]])
 
-(define-struct-opt DHCPv6 Status
+(define-struct-opt DHCPv6Opt Status
   [[int code :len 2]
    [all msg]])
 
-(define-int-opt DHCPv6 Pref 1)
+(define-int-opt DHCPv6Opt Pref 1)
 
-(define-packet-opt DHCPv6 IANA
+(define-packet-opt DHCPv6Opt IANA
   [[int iaid :len 4]
    [int T1 :len 4]
    [int T2 :len 4]
    [struct [opts] :struct (async-name DHCPv6OptListStruct)]]
   [[iaid 0] [T1 0] [T2 0] [opts #()]])
 
-(define-packet-opt DHCPv6 IATA
+(define-packet-opt DHCPv6Opt IATA
   [[int iaid :len 4]
    [struct [opts] :struct (async-name DHCPv6OptListStruct)]]
   [[iaid 0] [opts #()]])
 
-(define-packet-opt DHCPv6 IAPD
+(define-packet-opt DHCPv6Opt IAPD
   [[int iaid :len 4]
    [int T1 :len 4]
    [int T2 :len 4]
    [struct [opts] :struct (async-name  DHCPv6OptListStruct)]]
   [[iaid 0] [T1 0] [T2 0] [opts #()]])
 
-(define-packet-opt DHCPv6 IAAddr
+(define-packet-opt DHCPv6Opt IAAddr
   [[struct [addr] :struct (async-name IPv6Addr)]
    [int preftime :len 4]
    [int validtime :len 4]
    [struct [opts] :struct (async-name DHCPv6OptListStruct)]]
   [[iaid 0] [preftime 0] [validtime 0] [opts #()]])
 
-(define-packet-opt DHCPv6 IAPrefix
+(define-packet-opt DHCPv6Opt IAPrefix
   [[int preftime :len 4]
    [int validtime :len 4]
    [int plen :len 1]
@@ -180,15 +180,15 @@
    [struct [opts] :struct (async-name DHCPv6OptListStruct)]]
   [[preftime 0] [validtime 0] [plen 64] [prefix IPv6-ZERO] [opts #()]])
 
-(define-atom-struct-opt DHCPv6 ReqOpt
+(define-atom-struct-opt DHCPv6Opt ReqOpt
   [int opts
    :len 2
    :repeat-while (async-wait (.peek reader))
    :to-each (normalize it DHCPv6Opt)])
 
-(define-int-opt DHCPv6 ElapsedTime 2)
-(define-int-opt DHCPv6 RefreshTime 4)
+(define-int-opt DHCPv6Opt ElapsedTime 2)
+(define-int-opt DHCPv6Opt RefreshTime 4)
 
-(define-atom-struct-opt DHCPv6 DNSServer IPv6Addrs)
-(define-atom-struct-opt DHCPv6 DNSSearch DNSNames)
-(define-atom-struct-opt DHCPv6 NTPServer IPv6Addrs)
+(define-atom-struct-opt DHCPv6Opt DNSServer IPv6Addrs)
+(define-atom-struct-opt DHCPv6Opt DNSSearch DNSNames)
+(define-atom-struct-opt DHCPv6Opt NTPServer IPv6Addrs)

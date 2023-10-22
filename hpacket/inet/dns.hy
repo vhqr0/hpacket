@@ -21,9 +21,6 @@
         TXT    16
         ANY   255))
 
-;;; compatible with opt dict defined by define-opt-dict
-(setv DNSTypeOpt DNSType)
-
 (defclass DNSRcode [IntEnum]
   (setv NoError     0
         FormatError 1

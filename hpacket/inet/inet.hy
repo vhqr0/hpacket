@@ -77,17 +77,16 @@
     data))
 
 (defmacro define-opt-dict [name enum-fields struct-fields]
-  (let [opt-name (hy.models.Symbol (+ (str name) "Opt"))
-        opt-struct-name (hy.models.Symbol (+ (str name) "OptStruct"))
-        opt-list-struct-name (hy.models.Symbol (+ (str name) "OptListStruct"))]
+  (let [struct-name (hy.models.Symbol (+ (str name) "Struct"))
+        list-struct-name (hy.models.Symbol (+ (str name) "ListStruct"))]
     `(do
-       (defclass ~opt-name [OptDict IntEnum]
+       (defclass ~name [OptDict IntEnum]
          (setv ~@enum-fields))
-       (defstruct ~opt-struct-name
+       (defstruct ~struct-name
          ~struct-fields)
-       (define-dry-struct ~opt-list-struct-name
+       (define-dry-struct ~list-struct-name
          opts
-         (async-name ~opt-struct-name)))))
+         (async-name ~struct-name)))))
 
 (defclass IntOpt [Opt]
   (setv ilen None
@@ -103,10 +102,9 @@
         data)))
 
 (defmacro define-int-opt [name code ilen-form [ecls-form None]]
-  (let [opt-name (hy.models.Symbol (+ (str name) "Opt"))
-        class-name (hy.models.Symbol (+ (str name) "Opt" (str code)))]
+  (let [class-name (hy.models.Symbol (+ (str name) (str code)))]
     `(defclass
-       [(.register ~opt-name (. ~opt-name ~code))]
+       [(.register ~name (. ~name ~code))]
        ~class-name [IntOpt]
        (setv ilen ~ilen-form)
        ~@(when ecls-form
@@ -120,16 +118,15 @@
     (get (.unpack cls data) 0)))
 
 (defmacro define-atom-struct-opt [name code [struct-spec None]]
-  (let [opt-name (hy.models.Symbol (+ (str name) "Opt"))
-        class-name (hy.models.Symbol (+ (str name) "Opt" (str code)))
+  (let [class-name (hy.models.Symbol (+ (str name) (str code)))
         struct-name (if (isinstance struct-spec hy.models.Symbol)
                         struct-spec
-                        (hy.models.Symbol (+ (str name) "Opt" (str code) "Struct")))]
+                        (hy.models.Symbol (+ (str name) (str code) "Struct")))]
     `(do
        ~@(when (and struct-spec (not (isinstance struct-spec hy.models.Symbol)))
            `((defstruct ~struct-name [~struct-spec])))
        (defclass
-         [(.register ~opt-name (.~opt-name ~code))]
+         [(.register ~name (.~name ~code))]
          ~class-name [AtomStructOpt ~struct-name]))))
 
 (defclass StructOpt [Opt]
@@ -140,16 +137,15 @@
     (.unpack cls data)))
 
 (defmacro define-struct-opt [name code [struct-spec None]]
-  (let [opt-name (hy.models.Symbol (+ (str name) "Opt"))
-        class-name (hy.models.Symbol (+ (str name) "Opt" (str code)))
+  (let [class-name (hy.models.Symbol (+ (str name) (str code)))
         struct-name (if (isinstance struct-spec hy.models.Symbol)
                         struct-spec
-                        (hy.models.Symbol (+ (str name) "Opt" (str code) "Struct")))]
+                        (hy.models.Symbol (+ (str name) (str code) "Struct")))]
     `(do
        ~@(when (and struct-spec (not (isinstance struct-spec hy.models.Symbol)))
            `((defstruct ~struct-name ~struct-spec)))
        (defclass
-         [(.register ~opt-name (.~opt-name ~code))]
+         [(.register ~name (.~name ~code))]
          ~class-name [StructOpt ~struct-name]))))
 
 (defclass PacketOpt [Opt]
@@ -160,10 +156,9 @@
     (.parse cls data)))
 
 (defmacro define-packet-opt [name code #* body]
-  (let [opt-name (hy.models.Symbol (+ (str name) "Opt"))
-        class-name (hy.models.Symbol (+ (str name) "Opt" (str code)))]
+  (let [class-name (hy.models.Symbol (+ (str name) (str code)))]
     `(defpacket
-       [(.register ~opt-name (. ~opt-name ~code))]
+       [(.register ~name (. ~name ~code))]
        ~class-name [PacketOpt]
        ~@body)))
 
@@ -345,7 +340,7 @@
 
 ;;; ipv4
 
-(define-opt-dict IPv4
+(define-opt-dict IPv4Opt
   [EOL 0 NOP 1]
   [[int type :len 1 :to (normalize it IPv4Opt)]
    [varlen data
@@ -401,7 +396,7 @@
 
 ;;; ipv6
 
-(define-opt-dict IPv6
+(define-opt-dict IPv6Opt
   [Pad1 0 PadN 1]
   [[int type :len 1 :to (normalize it IPv6Opt)]
    [varlen data
@@ -419,7 +414,7 @@
           (let [n (- 6 mod)]
             (+ opts b"\x01" (int-pack n 1) (bytes n))))))
 
-(define-atom-struct-opt IPv6 PadN
+(define-atom-struct-opt IPv6Opt PadN
   [all pad
    :from (bytes (- it 2))
    :to (+ (len it) 2)])
@@ -617,7 +612,7 @@
 
 ;;; ndp
 
-(define-opt-dict ICMPv6ND
+(define-opt-dict ICMPv6NDOpt
   [SrcAddr 1
    DstAddr 2
    Prefix  3
@@ -664,10 +659,10 @@
    [struct [opts] :struct (async-name ICMPv6NDOptListStruct)]]
   [[res 0] [tgt IPv6-ZERO] [dst IPv6-ZERO] [opts #()]])
 
-(define-atom-struct-opt ICMPv6ND SrcAddr MACAddr)
-(define-atom-struct-opt ICMPv6ND DstAddr MACAddr)
+(define-atom-struct-opt ICMPv6NDOpt SrcAddr MACAddr)
+(define-atom-struct-opt ICMPv6NDOpt DstAddr MACAddr)
 
-(define-packet-opt ICMPv6ND Prefix
+(define-packet-opt ICMPv6NDOpt Prefix
   [[int plen :len 1]
    [bits [L A res1] :lens [1 1 6]]
    [int validlifetime :len 4]
@@ -678,12 +673,12 @@
    [validlifetime 0xffffffff] [preferredtime 0xffffffff]
    [res2 0] [prefix IPv6-ZERO]])
 
-(define-packet-opt ICMPv6ND RMHead
+(define-packet-opt ICMPv6NDOpt RMHead
   [[int res :len 6]]
   [[res 0]]
   (defn [property] parse-next-class [self] IPv6Error))
 
-(define-int-opt ICMPv6ND MTU 6)
+(define-int-opt ICMPv6NDOpt MTU 6)
 
 
 ;;; udp
@@ -718,7 +713,7 @@
 
 ;;; tcp
 
-(define-opt-dict TCP
+(define-opt-dict TCPOpt
   [EOL    0
    NOP    1
    MSS    2
@@ -758,11 +753,11 @@
       (setv self.dataofs (// (len self.head) 4)
             self.head (int-replace self.head 12 1 (+ (<< self.dataofs 4) self.res))))))
 
-(define-int-opt TCP MSS 2)
-(define-int-opt TCP WS  1)
+(define-int-opt TCPOpt MSS 2)
+(define-int-opt TCPOpt WS  1)
 
-(define-atom-struct-opt TCP SAck
+(define-atom-struct-opt TCPOpt SAck
   [int edges :len 4 :repeat-while (async-wait (.peek reader))])
 
-(define-struct-opt TCP TS
+(define-struct-opt TCPOpt TS
   [[int [tsval tsecr] :len 4 :repeat 2]])
