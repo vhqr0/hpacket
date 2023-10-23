@@ -29,7 +29,61 @@
   (defn print [self #* args #** kwargs]
     (print self.prefix #* args #** kwargs)))
 
-(defclass Packet []
+(defclass DispMixin []
+  (setv disp-whitelist None
+        disp-blacklist None)
+
+  (defn disp-attr-match-p [self attr pred-list default-pred]
+    (for [rule pred-list]
+      (ebranch (isinstance rule it)
+               str   (when (= attr rule)
+                       (break))
+               tuple (ecase (len rule)
+                            1 (let [#(name) rule]
+                                (when (and (= attr name) (default-pred (getattr self name)))
+                                  (break)))
+                            2 (let [#(name pred) rule]
+                                (when (and (= attr name) (pred (getattr self name)))
+                                  (break)))))
+      (else
+        (return False)))
+    (return True))
+
+  (defn disp-attr-valid-p [self attr]
+    (unless (is self.disp-whitelist None)
+      (unless (.disp-attr-match-p self attr self.disp-whitelist bool)
+        (return False)))
+    (unless (is self.disp-blacklist None)
+      (when (.disp-attr-match-p self attr self.disp-blacklist (fn [x] (not x)))
+        (return False)))
+    (return True))
+
+  (defn [property] disp-all-attrs [self]
+    (raise NotImplementedError))
+
+  (defn [property] disp-attrs [self]
+    (filter self.disp-attr-valid-p self.disp-all-attrs))
+
+  (defn [property] disp-formatted-attrs [self]
+    (gfor attr self.disp-attrs
+          (.format "{}={}" attr (repr (getattr self attr)))))
+
+  (defn [property] disp-inline-attrs-str [self]
+    (.join "," self.disp-formatted-attrs))
+
+  (defn [property] disp-inline-str [self]
+    (.format "{}({})" (. self #-- class #-- name) self.disp-inline-attrs-str))
+
+  (defn disp-print-attrs [self printer]
+    (for [attr self.disp-formatted-attrs]
+      (.print printer attr)))
+
+  (defn disp-print [self printer]
+    (.print printer (. self #-- class #-- name))
+    (with [_ printer]
+      (.disp-print-attrs self printer))))
+
+(defclass Packet [DispMixin]
   (setv struct None)
 
   (defn #-- init [self]
@@ -53,26 +107,21 @@
   (defn #-- contains [self packet-class]
     (bool (get self packet-class)))
 
+  (defn [property] disp-all-attrs [self]
+    self.struct.names)
+
   (defn #-- str [self]
-    (let [kwargs (.join "," (gfor kw self.struct.names (.format "{}={}" kw (repr (getattr self kw)))))
-          s (.format "{}({})" (. self #-- class #-- name) kwargs)]
-      (when self.next-packet
-        (+= s "/" (str self.next-packet)))
-      s))
+    (if self.next-packet
+        (+ self.disp-inline-str "/" (str self.next-packet))
+        self.disp-inline-str))
 
   (defn #-- repr [self]
     (str self))
 
-  (defn print-packet [self printer]
-    (for [name self.struct.names]
-      (.print printer (.format "{}: {}" name (repr (getattr self name))))))
-
   (defn print [self [printer None]]
     (unless printer
       (setv printer (IndentPrinter)))
-    (.print printer (. self #-- class #-- name))
-    (with [_ printer]
-      (.print-packet self printer))
+    (.disp-print self printer)
     (when self.next-packet
       (.print self.next-packet printer)))
 
@@ -84,12 +133,14 @@
           buf (.read-all reader)]
       (when buf
         (setv packet.next-packet
-              (try
-                (.parse (or packet.parse-next-class Payload) buf)
-                (except [Exception]
-                  (when debug
-                    (print (traceback.format-exc)))
-                  (Payload :data buf)))))
+              (let [next-class (or packet.parse-next-class Payload)]
+                (try
+                  (.parse next-class buf)
+                  (except [e Exception]
+                    (when debug
+                      (print (.format "except while parsing {}: {}" (. next-class #-- name)  e))
+                      (print (traceback.format-exc)))
+                    (Payload :data buf))))))
       packet))
 
   (defn pre-build [self])
@@ -107,11 +158,19 @@
     (.build self)))
 
 (defstruct PayloadStruct [[all data]])
+
 (defclass Payload [Packet]
   (setv struct PayloadStruct)
+
   (defn #-- init [self [data b""]]
     (#super-- init)
-    (setv self.data data)))
+    (setv self.data data))
+
+  (defn #-- str [self]
+    (.format "Payload(len={},peek={})" (len self.data) (cut self.data 16)))
+
+  (defn disp-print [self printer]
+    (.print printer self)))
 
 (defmacro defpacket [decorators name bases struct-fields fields #* body]
   (let [struct-name (hy.models.Symbol (+ (str name) "Struct"))

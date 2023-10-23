@@ -50,6 +50,21 @@
 
 ;;; opt util
 
+(defclass PrintOptsMixin []
+  (defn disp-print-attrs [self printer]
+    (#super disp-print-attrs printer)
+    (when self.opts
+      (.print printer "opts={")
+      (with [_ printer]
+        (for [#(type data) self.opts]
+          (if (isinstance data Packet)
+              (do
+                (.print printer (.format "{}:" (repr type)))
+                (with [_ printer]
+                  (.print data printer)))
+              (.print printer (.format "{}: {}" (repr type) (repr data))))))
+      (.print printer "}"))))
+
 (defclass Opt []
   (defn [classmethod] pack-opt [cls data]
     (raise NotImplementedError))
@@ -71,8 +86,9 @@
       (when opt-class
         (try
           (setv data (.unpack-opt opt-class data))
-          (except [Exception]
+          (except [e Exception]
             (when hpacket.debug
+              (print (.format "except while parsing {}: {}" (. cls #-- name) e))
               (print (traceback.format-exc)))))))
     data))
 
@@ -155,11 +171,11 @@
   (defn [classmethod] unpack-opt [cls data]
     (.parse cls data)))
 
-(defmacro define-packet-opt [name code #* body]
+(defmacro define-packet-opt [name code bases #* body]
   (let [class-name (hy.models.Symbol (+ (str name) (str code)))]
     `(defpacket
        [(.register ~name (. ~name ~code))]
-       ~class-name [PacketOpt]
+       ~class-name [~@bases PacketOpt]
        ~@body)))
 
 
@@ -357,7 +373,7 @@
 (defpacket [(EtherType.register EtherType.IPv4)] IPv4
   ;; order is necessary: next class mixin should resolve proto first,
   ;; then cksum pload mixin can calculate phead.
-  [CksumPloadMixin ProtoDispatchMixin]
+  [PrintOptsMixin CksumPloadMixin ProtoDispatchMixin]
   [[bits [ver ihl] :lens [4 4]]
    [int tos :len 1]
    [int tlen :len 2]
@@ -375,7 +391,8 @@
    [res 0] [DF 0] [MF 0] [offset 0] [ttl 64]
    [proto 0] [cksum 0] [src IPv4-ZERO] [dst IPv4-ZERO] [opts #()]]
 
-  (setv proto-attr "proto"
+  (setv disp-whitelist #(#("id") #("DF") #("MF") #("offset") "proto" "src" "dst")
+        proto-attr "proto"
         proto-dict IPProto)
 
   (defn cksum-phead [self buf proto]
@@ -427,7 +444,8 @@
    [struct [[src] [dst]] :struct (async-name IPv6Addr) :repeat 2]]
   [[ver 6] [tc 0] [fl 0] [plen 0] [nh 0] [hlim 64] [src IPv6-ZERO] [dst IPv6-ZERO]]
 
-  (setv proto-attr "nh"
+  (setv disp-whitelist #(#("fl") "nh" "src" "dst")
+        proto-attr "nh"
         proto-dict IPProto)
 
   (defn cksum-phead [self buf proto]
@@ -451,7 +469,8 @@
    [int id :len 4]]
   [[nh 0] [res1 0] [offset 0] [res2 0] [M 0] [id 0]]
 
-  (setv proto-attr "nh"
+  (setv disp-whitelist #("nh" #("offset") #("M") #("id"))
+        proto-attr "nh"
         proto-dict IPProto))
 
 (defclass IPv6ExtMixin [CksumProxyPloadMixin ProtoDispatchMixin]
@@ -464,14 +483,16 @@
       (setv self.elen (- (// (len self.head) 8) 1)
             self.head (int-replace self.head 1 1 self.elen)))))
 
-(defpacket [] IPv6Opts [IPv6ExtMixin]
+(defpacket [] IPv6Opts [PrintOptsMixin IPv6ExtMixin]
   [[int nh :len 1 :to (normalize it IPProto)]
    [int elen :len 1]
    [bytes opts
     :len (- (* 8 (+ elen 1)) 2)
     :from (ipv6-pad-opts (IPv6OptListStruct.pack it))
     :to (get (IPv6OptListStruct.unpack it) 0)]]
-  [[nh 0] [elen 0] [opts #()]])
+  [[nh 0] [elen 0] [opts #()]]
+
+  (setv disp-whitelist #("nh")))
 
 (defclass [(IPProto.register IPProto.HBHOpts)]  IPv6HBHOpts  [IPv6Opts])
 (defclass [(IPProto.register IPProto.DestOpts)] IPv6DestOpts [IPv6Opts])
@@ -493,7 +514,9 @@
    [struct [hwdst] :struct (async-name MACAddr)]
    [struct [protodst] :struct (async-name IPv4Addr)]]
   [[hwtype 1] [prototype EtherType.IPv4] [hwlen 6] [protolen 4] [op ARPOp.Req]
-   [hwsrc MAC-ZERO] [protosrc IPv4-ZERO] [hwdst MAC-ZERO] [protodst IPv4-ZERO]])
+   [hwsrc MAC-ZERO] [protosrc IPv4-ZERO] [hwdst MAC-ZERO] [protodst IPv4-ZERO]]
+
+  (setv disp-whitelist #("op" "hwsrc" "protosrc" "hwdst" "protodst")))
 
 
 ;;; icmp common
@@ -531,7 +554,8 @@
    [int cksum :len 2]]
   [[type 0] [code 0] [cksum 0]]
 
-  (setv proto-attr "type"
+  (setv disp-whitelist #("type" #("code"))
+        proto-attr "type"
         proto-dict ICMPv4Type)
 
   (defn post-build [self]
@@ -552,11 +576,15 @@
 
 (defpacket [] ICMPv4WithPacket [ICMPv4WithPacketMixin]
   [[int unused :len 4]]
-  [[unused 0]])
+  [[unused 0]]
+
+  (setv disp-whitelist #()))
 
 (defpacket [] ICMPv4WithPacketPTR [ICMPv4WithPacketMixin]
   [[int ptr :len 1] [int unused :len 3]]
-  [[ptr 0] [unused 0]])
+  [[ptr 0] [unused 0]]
+
+  (setv disp-whitelist #(#("ptr"))))
 
 (defpacket [] ICMPv4WithPacketAddr [ICMPv4WithPacketMixin]
   [[struct [addr] :struct (async-name IPv4Addr)]]
@@ -576,7 +604,8 @@
    [int cksum :len 2]]
   [[type 0] [code 0] [cksum 0]]
 
-  (setv proto-attr "type"
+  (setv disp-whitelist #("type" #("code"))
+        proto-attr "type"
         proto-dict ICMPv6Type)
 
   (setv cksum-proto  IPProto.ICMPv6
@@ -594,7 +623,9 @@
 
 (defpacket [] ICMPv6WithPacket [ICMPv6WithPacketMixin]
   [[int unused :len 4]]
-  [[unused 0]])
+  [[unused 0]]
+
+  (setv disp-whitelist #()))
 
 (defpacket [] ICMPv6WithPacketMTU [ICMPv6WithPacketMixin]
   [[int mtu :len 4]]
@@ -626,12 +657,14 @@
     :from (ICMPv6NDOpt.pack type it)
     :to (ICMPv6NDOpt.unpack type it)]])
 
-(defpacket [(ICMPv6Type.register ICMPv6Type.NDRS)] ICMPv6NDRS []
+(defpacket [(ICMPv6Type.register ICMPv6Type.NDRS)] ICMPv6NDRS [PrintOptsMixin]
   [[int res :len 4]
    [struct [opts] :struct (async-name ICMPv6NDOptListStruct)]]
-  [[res 0] [opts #()]])
+  [[res 0] [opts #()]]
 
-(defpacket [(ICMPv6Type.register ICMPv6Type.NDRA)] ICMPv6NDRA []
+  (setv disp-whitelist #()))
+
+(defpacket [(ICMPv6Type.register ICMPv6Type.NDRA)] ICMPv6NDRA [PrintOptsMixin]
   [[int hlim :len 1]
    [bits [M O res] :lens [1 1 6]]
    [int routerlifetime :len 2]
@@ -639,30 +672,38 @@
    [int retranstimer :len 4]
    [struct [opts] :struct (async-name ICMPv6NDOptListStruct)]]
   [[hlim 0] [M 0] [O 0] [res 0] [routerlifetime 1800]
-   [reachabletime 0] [retranstimer 0] [opts #()]])
+   [reachabletime 0] [retranstimer 0] [opts #()]]
 
-(defpacket [(ICMPv6Type.register ICMPv6Type.NDNS)] ICMPv6NDNS []
+  (setv disp-whitelist #(#("hlim") #("M") #("O") #("routerlifetime") #("reachabletime") #("retranstimer"))))
+
+(defpacket [(ICMPv6Type.register ICMPv6Type.NDNS)] ICMPv6NDNS [PrintOptsMixin]
   [[int res :len 4]
    [struct [tgt] :struct (async-name IPv6Addr)]
    [struct [opts] :struct (async-name ICMPv6NDOptListStruct)]]
-  [[res 0] [tgt IPv6-ZERO] [opts #()]])
+  [[res 0] [tgt IPv6-ZERO] [opts #()]]
 
-(defpacket [(ICMPv6Type.register ICMPv6Type.NDNA)] ICMPv6NDNA []
+  (setv disp-whitelist #("tgt")))
+
+(defpacket [(ICMPv6Type.register ICMPv6Type.NDNA)] ICMPv6NDNA [PrintOptsMixin]
   [[bits [R S O res] :lens [1 1 1 29]]
    [struct [tgt] :struct (async-name IPv6Addr)]
    [struct [opts] :struct (async-name ICMPv6NDOptListStruct)]]
-  [[R 0] [S 0] [O 0] [res 0] [tgt IPv6-ZERO] [opts #()]])
+  [[R 0] [S 0] [O 0] [res 0] [tgt IPv6-ZERO] [opts #()]]
 
-(defpacket [(ICMPv6Type.register ICMPv6Type.NDRM)] ICMPv6NDRM []
+  (setv disp-whitelist #(#("R") #("S") #("O") "tgt")))
+
+(defpacket [(ICMPv6Type.register ICMPv6Type.NDRM)] ICMPv6NDRM [PrintOptsMixin]
   [[int res :len 4]
    [struct [[tgt] [dst]] :struct (async-name IPv6Addr) :repeat 2]
    [struct [opts] :struct (async-name ICMPv6NDOptListStruct)]]
-  [[res 0] [tgt IPv6-ZERO] [dst IPv6-ZERO] [opts #()]])
+  [[res 0] [tgt IPv6-ZERO] [dst IPv6-ZERO] [opts #()]]
+
+  (setv disp-whitelist #("tgt" "dst")))
 
 (define-atom-struct-opt ICMPv6NDOpt SrcAddr MACAddr)
 (define-atom-struct-opt ICMPv6NDOpt DstAddr MACAddr)
 
-(define-packet-opt ICMPv6NDOpt Prefix
+(define-packet-opt ICMPv6NDOpt Prefix []
   [[int plen :len 1]
    [bits [L A res1] :lens [1 1 6]]
    [int validlifetime :len 4]
@@ -671,11 +712,13 @@
    [struct [prefix] :struct (async-name IPv6Addr)]]
   [[plen 64] [L 0] [A 0] [res1 0]
    [validlifetime 0xffffffff] [preferredtime 0xffffffff]
-   [res2 0] [prefix IPv6-ZERO]])
+   [res2 0] [prefix IPv6-ZERO]]
+  (setv disp-whitelist #(#("L") #("A") #("validlifetime") #("preferredtime") "prefix")))
 
-(define-packet-opt ICMPv6NDOpt RMHead
+(define-packet-opt ICMPv6NDOpt RMHead []
   [[int res :len 6]]
   [[res 0]]
+  (setv disp-whitelist #())
   (defn [property] parse-next-class [self] IPv6Error))
 
 (define-int-opt ICMPv6NDOpt MTU 6)
@@ -698,7 +741,8 @@
    [int cksum :len 2]]
   [[src 0] [dst 0] [len 0] [cksum 0]]
 
-  (setv cksum-proto IPProto.UDP
+  (setv disp-whitelist #("src" "dst")
+        cksum-proto IPProto.UDP
         cksum-offset 6)
 
   (defn [property] parse-next-class [self]
@@ -729,7 +773,7 @@
     :from (TCPOpt.pack type it)
     :to (TCPOpt.unpack type it)]])
 
-(defpacket [(IPProto.register IPProto.TCP)] TCP [CksumProxySelfMixin]
+(defpacket [(IPProto.register IPProto.TCP)] TCP [PrintOptsMixin CksumProxySelfMixin]
   [[int [src dst] :len 2 :repeat 2]
    [int [seq ack] :len 4 :repeat 2]
    [bits [dataofs res C E U A P R S F] :lens [4 4 1 1 1 1 1 1 1 1]]
@@ -744,7 +788,11 @@
    [res 0] [C 0] [E 0] [U 0] [A 0] [P 0] [R 0] [S 0] [F 0]
    [win 8192] [cksum 0] [uptr 0] [opts #()]]
 
-  (setv cksum-proto IPProto.TCP
+  (setv disp-whitelist
+        #("src" "dst" #("seq") #("ack")
+                #("C") #("E") #("U") #("A") #("P") #("R") #("S") #("F")
+                "win" #("uptr"))
+        cksum-proto IPProto.TCP
         cksum-offset 16)
 
   (defn post-build [self]

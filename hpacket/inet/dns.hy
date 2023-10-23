@@ -94,6 +94,22 @@
    [qdcount 0] [ancount 0] [nscount 0] [arcount 0]
    [qd #()] [an #()] [ns #()] [ar #()]]
 
+  (setv disp-whitelist #("qr" "op" #("aa") #("tc") #("rd") #("ra") #("z") #("rcode")))
+
+  (defn disp-print-attrs [self printer]
+    (#super disp-print-attrs printer)
+    (for [attr #("qd" "an" "ns" "ar")]
+      (let [q (getattr self attr)]
+        (when q
+          (if (= (len q) 1)
+              (.print printer (.format "{}=[{}]" attr (get q 0)))
+              (do
+                (.print printer (.format "{}=[" attr))
+                (with [_ printer]
+                  (for [i (getattr self attr)]
+                    (.print printer (repr i))))
+                (.print printer "]")))))))
+
   (defn pre-build [self]
     (#super pre-build)
     (when (= self.qdcount 0)
@@ -111,7 +127,7 @@
 (define-atom-struct-opt DNSType PTR   DNSName)
 (define-atom-struct-opt DNSType NS    DNSName)
 
-(define-packet-opt DNSType SOA
+(define-packet-opt DNSType SOA []
   [[struct [[mname] [rname]] :struct (async-name DNSName) :repeat 2]
    [int serial :len 4]
    [int refresh :len 4]

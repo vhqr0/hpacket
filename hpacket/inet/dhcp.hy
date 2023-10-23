@@ -52,7 +52,7 @@
     :from (DHCPv4Opt.pack type it)
     :to (DHCPv4Opt.unpack type it)]])
 
-(defpacket [(UDPService.register UDPService.DHCPv4Cli UDPService.DHCPv4Srv)] DHCPv4 []
+(defpacket [(UDPService.register UDPService.DHCPv4Cli UDPService.DHCPv4Srv)] DHCPv4 [PrintOptsMixin]
   [[int op :len 1 :to (normalize it DHCPv4Op)]
    [int htype :len 1]
    [int hlen :len 1]
@@ -70,7 +70,9 @@
   [[op DHCPv4Op.Req] [htype 1] [hlen 6] [hops 0] [xid 0] [secs 0] [flags 0]
    [ciaddr IPv4-ZERO] [yiaddr IPv4-ZERO] [siaddr IPv4-ZERO] [giaddr IPv4-ZERO]
    [chaddr MAC-ZERO] [pad (bytes 10)] [sname (bytes 64)] [file (bytes 128)]
-   [magic DHCPv4-MAGIC] [opts #()]])
+   [magic DHCPv4-MAGIC] [opts #()]]
+
+  (setv disp-whitelist #("op" #("hops") "xid" "ciaddr" "yiaddr" "siaddr" "giaddr" "chaddr")))
 
 (define-int-opt DHCPv4Opt MsgType 1 DHCPv4MsgType)
 
@@ -134,11 +136,12 @@
     :from (DHCPv6Opt.pack type it)
     :to (DHCPv6Opt.unpack type it)]])
 
-(defpacket [(UDPService.register UDPService.DHCPv6Cli UDPService.DHCPv6Cli)] DHCPv6 []
+(defpacket [(UDPService.register UDPService.DHCPv6Cli UDPService.DHCPv6Cli)] DHCPv6 [PrintOptsMixin]
   [[int type :len 1 :to (normalize it DHCPv6MsgType)]
    [int xid :len 3]
    [struct [opts] :struct (async-name DHCPv6OptListStruct)]]
-  [[type DHCPv6MsgType.Solicit] [xid 0] [opts #()]])
+  [[type DHCPv6MsgType.Solicit] [xid 0] [opts #()]]
+  (setv disp-whitelist #("type" "xid")))
 
 (define-struct-opt DHCPv6Opt Status
   [[int code :len 2]
@@ -146,39 +149,44 @@
 
 (define-int-opt DHCPv6Opt Pref 1)
 
-(define-packet-opt DHCPv6Opt IANA
+(define-packet-opt DHCPv6Opt IANA [PrintOptsMixin]
   [[int iaid :len 4]
    [int T1 :len 4]
    [int T2 :len 4]
    [struct [opts] :struct (async-name DHCPv6OptListStruct)]]
-  [[iaid 0] [T1 0] [T2 0] [opts #()]])
+  [[iaid 0] [T1 0] [T2 0] [opts #()]]
+  (setv disp-whitelist #("iaid" #("T1") #("T2"))))
 
-(define-packet-opt DHCPv6Opt IATA
+(define-packet-opt DHCPv6Opt IATA [PrintOptsMixin]
   [[int iaid :len 4]
    [struct [opts] :struct (async-name DHCPv6OptListStruct)]]
-  [[iaid 0] [opts #()]])
+  [[iaid 0] [opts #()]]
+  (setv disp-whitelist #("iaid")))
 
-(define-packet-opt DHCPv6Opt IAPD
+(define-packet-opt DHCPv6Opt IAPD [PrintOptsMixin]
   [[int iaid :len 4]
    [int T1 :len 4]
    [int T2 :len 4]
    [struct [opts] :struct (async-name  DHCPv6OptListStruct)]]
-  [[iaid 0] [T1 0] [T2 0] [opts #()]])
+  [[iaid 0] [T1 0] [T2 0] [opts #()]]
+  (setv disp-whitelist #("iaid" #("T1") #("T2"))))
 
-(define-packet-opt DHCPv6Opt IAAddr
+(define-packet-opt DHCPv6Opt IAAddr [PrintOptsMixin]
   [[struct [addr] :struct (async-name IPv6Addr)]
    [int preftime :len 4]
    [int validtime :len 4]
    [struct [opts] :struct (async-name DHCPv6OptListStruct)]]
-  [[iaid 0] [preftime 0] [validtime 0] [opts #()]])
+  [[addr IPv6-ZERO] [iaid 0] [preftime 0] [validtime 0] [opts #()]]
+  (setv disp-whitelist #("addr" "iaid" #("preftime") #("validtime"))))
 
-(define-packet-opt DHCPv6Opt IAPrefix
+(define-packet-opt DHCPv6Opt IAPrefix [PrintOptsMixin]
   [[int preftime :len 4]
    [int validtime :len 4]
    [int plen :len 1]
    [struct [prefix] :struct (async-name IPv6Addr)]
    [struct [opts] :struct (async-name DHCPv6OptListStruct)]]
-  [[preftime 0] [validtime 0] [plen 64] [prefix IPv6-ZERO] [opts #()]])
+  [[preftime 0] [validtime 0] [plen 64] [prefix IPv6-ZERO] [opts #()]]
+  (setv disp-whitelist #(#("preftime") #("validtime") "plen" "prefix")))
 
 (define-atom-struct-opt DHCPv6Opt ReqOpt
   [int opts
