@@ -16,7 +16,10 @@
     :len 4
     :to (ecase it
                PCAP-LE-MAGIC "little"
-               PCAP-BE-MAGIC "big")]])
+               PCAP-BE-MAGIC "big")
+    :from (ecase it
+                 "little" PCAP-LE-MAGIC
+                 "big"    PCAP-BE-MAGIC)]])
 
 (defstruct PcapLEHead
   [[int major    :len 2 :order "little"]
