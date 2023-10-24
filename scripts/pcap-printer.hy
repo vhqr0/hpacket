@@ -3,9 +3,10 @@
 
 (import
   hiolib.rule *
-  hiolib.stream *
   hpacket
-  hpacket.inet *)
+  hpacket [IndentPrinter]
+  hpacket.inet *
+  hpacket.pcap *)
 
 (defmain []
   (let [args (parse-args [["-d" "--debug" :action "store_true" :default False]
@@ -14,10 +15,9 @@
     (when args.debug
       (setv hpacket.debug True))
     (with [f (open args.input "rb")]
-      (let [reader (PcapReader (RawIOStream f))
-            printer (#/ hpacket.IndentPrinter :char " " :indent 1 :step 2)]
-        (.read-head reader)
-        (for [packet (.read-parsed-packets reader)]
+      (let [reader (Pcap.reader f)
+            printer (IndentPrinter :char " " :indent 1 :step 2)]
+        (for [packet reader]
           (if args.verbose
               (do
                 (print "---")
