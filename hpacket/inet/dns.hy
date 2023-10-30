@@ -64,7 +64,7 @@
                 True
                 (.append subnames (async-wait (.read-exactly reader nlen)))))))))
 
-(define-dry-atom-struct DNSNames names (async-name DNSName))
+(define-atom-list-struct DNSNameList names (async-name DNSName))
 
 (defstruct DNSQR
   [[struct [name] :struct (async-name DNSName)]

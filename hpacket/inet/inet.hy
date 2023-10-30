@@ -13,20 +13,6 @@
   hpacket
   hpacket *)
 
-(defmacro define-dry-struct [struct-name field-name struct-form]
-  `(defstruct ~struct-name
-     [[struct ~field-name
-       :struct ~struct-form
-       :repeat-while (async-wait (.peek reader))]]))
-
-(defmacro define-dry-atom-struct [struct-name field-name struct-form]
-  `(defstruct ~struct-name
-     [[struct ~field-name
-       :struct ~struct-form
-       :repeat-while (async-wait (.peek reader))
-       :to-each (get it 0)
-       :from-each #(it)]]))
-
 (defn int-replace [buf offset ilen i]
   (+ (cut buf offset)
      (int-pack i ilen)
@@ -100,7 +86,7 @@
          (setv ~@enum-fields))
        (defstruct ~struct-name
          ~struct-fields)
-       (define-dry-struct ~list-struct-name
+       (define-list-struct ~list-struct-name
          opts
          (async-name ~struct-name)))))
 
@@ -310,9 +296,9 @@
     :from (socket.inet-pton socket.AF-INET6 it)
     :to (socket.inet-ntop socket.AF-INET6 it)]])
 
-(define-dry-atom-struct MACAddrs  addrs (async-name MACAddr))
-(define-dry-atom-struct IPv4Addrs addrs (async-name IPv4Addr))
-(define-dry-atom-struct IPv6Addrs addrs (async-name IPv6Addr))
+(define-atom-list-struct MACAddrList  addrs (async-name MACAddr))
+(define-atom-list-struct IPv4AddrList addrs (async-name IPv4Addr))
+(define-atom-list-struct IPv6AddrList addrs (async-name IPv6Addr))
 
 (defstruct IPv4CksumPhead
   [[struct [[src] [dst]] :struct (async-name IPv4Addr) :repeat 2]

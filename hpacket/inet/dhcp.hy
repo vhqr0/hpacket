@@ -89,8 +89,8 @@
 (define-int-opt DHCPv4Opt RebindTime  4)
 
 (define-atom-struct-opt DHCPv4Opt SubnetMask IPv4Addr)
-(define-atom-struct-opt DHCPv4Opt Router     IPv4Addrs)
-(define-atom-struct-opt DHCPv4Opt DNSServer  IPv4Addrs)
+(define-atom-struct-opt DHCPv4Opt Router     IPv4AddrList)
+(define-atom-struct-opt DHCPv4Opt DNSServer  IPv4AddrList)
 
 
 ;;; dhcpv6
@@ -197,6 +197,6 @@
 (define-int-opt DHCPv6Opt ElapsedTime 2)
 (define-int-opt DHCPv6Opt RefreshTime 4)
 
-(define-atom-struct-opt DHCPv6Opt DNSServer IPv6Addrs)
-(define-atom-struct-opt DHCPv6Opt DNSSearch DNSNames)
-(define-atom-struct-opt DHCPv6Opt NTPServer IPv6Addrs)
+(define-atom-struct-opt DHCPv6Opt DNSServer IPv6AddrList)
+(define-atom-struct-opt DHCPv6Opt DNSSearch DNSNameList)
+(define-atom-struct-opt DHCPv6Opt NTPServer IPv6AddrList)
