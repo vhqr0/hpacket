@@ -75,7 +75,7 @@
 
   (defn read-head [self]
     (setv self.order (get (.unpack-from-stream PcapMagic self.stream) 0))
-    (.unpack-dict-from-stream self.head-struct self.stream))
+    (dict (.zip self.head-struct (.unpack-from-stream self.head-struct self.stream))))
 
   (defn write-head [self [order "little"] [snaplen 65535] [linktype 1]]
     (setv self.order order)

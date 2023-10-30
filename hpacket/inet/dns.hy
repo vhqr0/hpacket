@@ -32,24 +32,26 @@
 (async-defclass DNSName [(async-name Struct)]
   (setv names #("name"))
 
-  (defn [staticmethod] pack [name]
+  (async-defn [classmethod] pack-to-stream [cls writer name]
     (when (isinstance name str)
       (setv name (lfor subname (.split name ".") (.encode subname))))
-    (let [buf b""]
-      (for [subname name]
-        (cond (isinstance subname int)
-              (do
-                (+= buf (int-pack (+ 0xc000 subname) 2))
-                (break))
-              (= subname b"")
-              (do
-                (+= buf b"\x00")
-                (break))
-              True
-              (+= buf (int-pack (len subname) 1) subname)))
-      buf))
+    (for [subname name]
+      (cond (isinstance subname int)
+            (do
+              (async-wait (.write writer (int-pack 0xc000 subname) 2))
+              (break))
+            (= subname b"")
+            (do
+              (async-wait (.write writer b"\x00"))
+              (break))
+            True
+            (do
+              (async-wait (.write writer (int-pack (len subname) 1)))
+              (async-wait (.write writer subname))))
+      (else
+        (raise ValueError))))
 
-  (async-defn [staticmethod] unpack-from-stream [reader]
+  (async-defn [classmethod] unpack-from-stream [cls reader]
     (let [subnames []]
       (while True
         (let [nlen (int-unpack (async-wait (.read-exactly reader 1)))]
@@ -64,15 +66,18 @@
                 True
                 (.append subnames (async-wait (.read-exactly reader nlen)))))))))
 
+(setv DNSName.sync-struct DNSName
+      AsyncDNSName.sync-struct DNSName)
+
 (define-atom-list-struct DNSNameList names (async-name DNSName))
 
 (defstruct DNSQR
   [[struct [name] :struct (async-name DNSName)]
    [int type :len 2 :to (normalize it DNSType)]
-   [int cls :len 2]])
+   [int class :len 2]])
 
 (defstruct DNSRR
-  [[struct [name type cls] :struct (async-name DNSQR)]
+  [[struct [name type class] :struct (async-name DNSQR)]
    [int ttl :len 4]
    [varlen data
     :len 2

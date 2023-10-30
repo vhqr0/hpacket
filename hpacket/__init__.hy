@@ -129,7 +129,7 @@
 
   (defn [classmethod] parse [cls buf]
     (let [reader (BIOStream buf)
-          packet (cls #** (.unpack-dict-from-stream cls.struct reader))
+          packet (cls #** (dict (.zip cls.struct #* (.unpack-from-stream cls.struct reader))))
           buf (.read-all reader)]
       (when buf
         (setv packet.next-packet
@@ -150,7 +150,7 @@
   (defn build [self]
     (setv self.pload (if self.next-packet (.build self.next-packet) b""))
     (.pre-build self)
-    (setv self.head (.pack-dict self.struct (dfor name self.struct.names name (getattr self name))))
+    (setv self.head (.pack self.struct #* (gfor name self.struct.names (getattr self name))))
     (.post-build self)
     (+ self.head self.pload))
 
