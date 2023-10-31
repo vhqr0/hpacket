@@ -104,7 +104,7 @@
     (let [#(packet sec msec) (.read-packet self)]
       #((Ether.parse packet) sec msec)))
 
-  (defn write-parsed-packet [self #* args #** kwargs]
+  (defn write-parsed-packet [self packet #* args #** kwargs]
     (.write-packet self (.build packet) #* args #** kwargs))
 
   (defn #-- iter [self]
