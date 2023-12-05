@@ -1,7 +1,7 @@
 (require
   hiolib.rule :readers * *
   hiolib.struct *
-  hpacket *)
+  hpacket.packet *)
 
 (import
   socket
@@ -10,15 +10,15 @@
   traceback
   hiolib.stream *
   hiolib.struct *
-  hpacket
-  hpacket *)
+  hpacket.packet
+  hpacket.packet *)
 
 (defn int-replace [buf offset ilen i]
   (+ (cut buf offset)
      (int-pack i ilen)
      (cut buf (+ offset ilen) None)))
 
-(defclass _DictMixin []
+(defclass RegistryDict []
   (defn #-- init-subclass [cls #* args #** kwargs]
     (#super-- init-subclass #* args #** kwargs)
     (setv cls._dict (dict)))
@@ -31,12 +31,36 @@
       (for [key keys]
         (setv (get cls._dict key) rcls))
       rcls)
-    wrapper))
+    wrapper)
+
+  (defn [classmethod] resolve [cls obj]
+    ;; resolve key of registered class instance obj
+    (for [#(key rcls) (.items cls._dict)]
+      (when (isinstance obj rcls)
+        (return key)))))
 
 
 ;;; opt util
+;;
+;; opt: tuple[type: int, data: Any]
+;; opts: list[opts]
+;;
+;; Opt:
+;;   opt.pack-opt(data) => bytes
+;;   opt.unpack-opt(bytes) => data
+;;
+;; Note that Opt may also a Struct, which used name pack/unpack.
+;;
+;; OptDict:
+;;   opt-dict.pack(type, data) => opt.pack-opt(data) => bytes
+;;   opt-dict.unpack(type, bytes) => opt.unpack-opt(bytes) => data
+;;
+;; OptDict usually is also a Enum of type, eg:
+;;   FooOpt.pack(FooOpt.barType, data)
+;;   FooOpt.unpack(FooOpt.barType, bytes)
 
-(defclass PrintOptsMixin []
+(defclass DispOptsMixin []
+  ;; print opts after all attrs
   (defn disp-print-attrs [self printer]
     (#super disp-print-attrs printer)
     (when self.opts
@@ -52,13 +76,10 @@
       (.print printer "}"))))
 
 (defclass Opt []
-  (defn [classmethod] pack-opt [cls data]
-    (raise NotImplementedError))
+  (defn [classmethod] pack-opt   [cls data] (raise NotImplementedError))
+  (defn [classmethod] unpack-opt [cls data] (raise NotImplementedError)))
 
-  (defn [classmethod] unpack-opt [cls data]
-    (raise NotImplementedError)))
-
-(defclass OptDict [_DictMixin]
+(defclass OptDict [RegistryDict]
   (defn [classmethod] pack [cls type data]
     (if (isinstance data bytes)
         data
@@ -73,7 +94,7 @@
         (try
           (setv data (.unpack-opt opt-class data))
           (except [e Exception]
-            (when hpacket.debug
+            (when hpacket.packet.debug
               (print (.format "except while parsing {}: {}" (. cls #-- name) e))
               (print (traceback.format-exc)))))))
     data))
@@ -166,22 +187,14 @@
 
 
 ;;; proto util
+;;
+;; dispatch next packet by proto, eg. Ether.type, IPv4.Proto, IPv6.nh
 
-(defclass ProtoDict [_DictMixin]
-  (defn [classmethod] resolve [cls next-packet]
-    ;; resolve proto field according to next packet, eg. if the type
-    ;; of next packet is ICMPv6, then the nh field of IPv6 should be
-    ;; IPProto.ICMPv6.
-    (for [#(key proto-class) (.items cls._dict)]
-      (when (isinstance next-packet proto-class)
-        (return key)))))
+(defclass ProtoDict [RegistryDict])
 
 (defclass ProtoDispatchMixin []
   (setv proto-dict None
         proto-attr None)
-
-  (defn [property] next-class-key [self]
-    (getattr self self.proto-attr))
 
   (defn [property] parse-next-class [self]
     (.get self.proto-dict (getattr self self.proto-attr)))
@@ -310,24 +323,10 @@
    [int len :len 2]
    [int proto :len 2]])
 
-
-;;; ether
-
 (defclass EtherType [ProtoDict IntEnum]
   (setv ARP  0x0806
         IPv4 0x0800
         IPv6 0x86dd))
-
-(defpacket [] Ether [ProtoDispatchMixin]
-  [[struct [[dst] [src]] :struct (async-name MACAddr) :repeat 2]
-   [int type :len 2 :to (normalize it EtherType)]]
-  [[dst MAC-ZERO] [src MAC-ZERO] [type 0]]
-
-  (setv proto-attr "type"
-        proto-dict EtherType))
-
-
-;;; ip common
 
 (defclass IPProto [ProtoDict IntEnum]
   (setv NoNext   59
@@ -339,459 +338,10 @@
         TCP       6
         UDP      17))
 
-
-;;; ipv4
-
-(define-opt-dict IPv4Opt
-  [EOL 0 NOP 1]
-  [[int type :len 1 :to (normalize it IPv4Opt)]
-   [varlen data
-    :len (if (in type #(0 1)) 0 1)
-    :len-from (if (in type #(0 1)) 0 (+ it 2))
-    :len-to (if (in type #(0 1)) 0 (- it 2))
-    :from (IPv4Opt.pack type it)
-    :to (IPv4Opt.unpack type it)]])
-
-(defn ipv4-pad-opts [opts]
-  (let [mod (% (len opts) 4)]
-    (if (= mod 0) opts (+ opts (bytes (- 4 mod))))))
-
-(defpacket [(EtherType.register EtherType.IPv4)] IPv4
-  ;; order is necessary: next class mixin should resolve proto first,
-  ;; then cksum pload mixin can calculate phead.
-  [PrintOptsMixin CksumPloadMixin ProtoDispatchMixin]
-  [[bits [ver ihl] :lens [4 4]]
-   [int tos :len 1]
-   [int tlen :len 2]
-   [int id :len 2]
-   [bits [res DF MF offset] :lens [1 1 1 13]]
-   [int ttl :len 1]
-   [int proto :len 1 :to (normalize it IPProto)]
-   [int cksum :len 2]
-   [struct [[src] [dst]] :struct (async-name IPv4Addr) :repeat 2]
-   [bytes opts
-    :len (* (- ihl 5) 4)
-    :from (ipv4-pad-opts (.pack IPv4OptListStruct it))
-    :to (get (.unpack IPv4OptListStruct it) 0)]]
-  [[ver 4] [ihl 0] [tos 0] [tlen 0] [id 0]
-   [res 0] [DF 0] [MF 0] [offset 0] [ttl 64]
-   [proto 0] [cksum 0] [src IPv4-ZERO] [dst IPv4-ZERO] [opts #()]]
-
-  (setv disp-whitelist #(#("id") #("DF") #("MF") #("offset") "proto" "src" "dst")
-        proto-attr "proto"
-        proto-dict IPProto)
-
-  (defn cksum-phead [self buf proto]
-    (.pack IPv4CksumPhead self.src self.dst (len buf) proto))
-
-  (defn post-build [self]
-    (#super post-build)
-    (when (= self.ihl 0)
-      (setv self.ihl (// (len self.head) 4)
-            self.head (int-replace self.head 0 1 (+ (<< self.ver 4) self.ihl))))
-    (when (= self.tlen 0)
-      (setv self.tlen (+ (len self.head) (len self.pload))
-            self.head (int-replace self.head 2 2 self.tlen)))
-    (when (= self.cksum 0)
-      (setv self.cksum (cksum self.head)
-            self.head (int-replace self.head 10 2 self.cksum)))))
-
-
-;;; ipv6
-
-(define-opt-dict IPv6Opt
-  [Pad1 0 PadN 1]
-  [[int type :len 1 :to (normalize it IPv6Opt)]
-   [varlen data
-    :len (if (= type 0) 0 1)
-    :from (IPv6Opt.pack type it)
-    :to (IPv6Opt.unpack type it)]])
-
-(defn ipv6-pad-opts [opts]
-  (let [mod (% (+ (len opts) 2) 8)]
-    (cond (= mod 0)
-          opts
-          (= mod 7)
-          (+ opts b"\x00")
-          True
-          (let [n (- 6 mod)]
-            (+ opts b"\x01" (int-pack n 1) (bytes n))))))
-
-(define-atom-struct-opt IPv6Opt PadN
-  [all pad
-   :from (bytes (- it 2))
-   :to (+ (len it) 2)])
-
-(defpacket [(EtherType.register EtherType.IPv6)] IPv6 [CksumPloadMixin ProtoDispatchMixin]
-  [[bits [ver tc fl] :lens [4 8 20]]
-   [int plen :len 2]
-   [int nh :len 1 :to (normalize it IPProto)]
-   [int hlim :len 1]
-   [struct [[src] [dst]] :struct (async-name IPv6Addr) :repeat 2]]
-  [[ver 6] [tc 0] [fl 0] [plen 0] [nh 0] [hlim 64] [src IPv6-ZERO] [dst IPv6-ZERO]]
-
-  (setv disp-whitelist #(#("fl") "nh" "src" "dst")
-        proto-attr "nh"
-        proto-dict IPProto)
-
-  (defn cksum-phead [self buf proto]
-    (.pack IPv6CksumPhead self.src self.dst (len buf) proto))
-
-  (defn pre-build [self]
-    (#super pre-build)
-    (when (= self.plen 0)
-      (setv self.plen (len self.pload)))))
-
-
-;;; ipv6 exts
-
-(defpacket [(IPProto.register IPProto.Frag)] IPv6Frag
-  ;; other than the following exts, frag ext has no elen fields,
-  ;; therefore it isn't inherit from ipv6 ext mixin.
-  [CksumProxyPloadMixin ProtoDispatchMixin]
-  [[int nh :len 1 :to (normalize it IPProto)]
-   [int res1 :len 1]
-   [bits [offset res2 M] :lens [13 2 1]]
-   [int id :len 4]]
-  [[nh 0] [res1 0] [offset 0] [res2 0] [M 0] [id 0]]
-
-  (setv disp-whitelist #("nh" #("offset") #("M") #("id"))
-        proto-attr "nh"
-        proto-dict IPProto))
-
-(defclass IPv6ExtMixin [CksumProxyPloadMixin ProtoDispatchMixin]
-  (setv proto-attr "nh"
-        proto-dict IPProto)
-
-  (defn post-build [self]
-    (#super post-build)
-    (when (= self.elen 0)
-      (setv self.elen (- (// (len self.head) 8) 1)
-            self.head (int-replace self.head 1 1 self.elen)))))
-
-(defpacket [] IPv6Opts [PrintOptsMixin IPv6ExtMixin]
-  [[int nh :len 1 :to (normalize it IPProto)]
-   [int elen :len 1]
-   [bytes opts
-    :len (- (* 8 (+ elen 1)) 2)
-    :from (ipv6-pad-opts (IPv6OptListStruct.pack it))
-    :to (get (IPv6OptListStruct.unpack it) 0)]]
-  [[nh 0] [elen 0] [opts #()]]
-
-  (setv disp-whitelist #("nh")))
-
-(defclass [(IPProto.register IPProto.HBHOpts)]  IPv6HBHOpts  [IPv6Opts])
-(defclass [(IPProto.register IPProto.DestOpts)] IPv6DestOpts [IPv6Opts])
-
-
-;;; arp
-
-(defclass ARPOp [IntEnum]
-  (setv Req 1 Rep 2))
-
-(defpacket [(EtherType.register EtherType.ARP)] ARP []
-  [[int hwtype :len 2]
-   [int prototype :len 2]
-   [int hwlen :len 1]
-   [int protolen :len 1]
-   [int op :len 2 :to (normalize it ARPOp)]
-   [struct [hwsrc] :struct (async-name MACAddr)]
-   [struct [protosrc] :struct (async-name IPv4Addr)]
-   [struct [hwdst] :struct (async-name MACAddr)]
-   [struct [protodst] :struct (async-name IPv4Addr)]]
-  [[hwtype 1] [prototype EtherType.IPv4] [hwlen 6] [protolen 4] [op ARPOp.Req]
-   [hwsrc MAC-ZERO] [protosrc IPv4-ZERO] [hwdst MAC-ZERO] [protodst IPv4-ZERO]]
-
-  (setv disp-whitelist #("op" "hwsrc" "protosrc" "hwdst" "protodst")))
-
-
-;;; icmp common
-
-(defclass IPv4Error [IPv4])
-(defclass IPv6Error [IPv6])
-
-(defclass ICMPv4Type [ProtoDict IntEnum]
-  (setv EchoReq       8
-        EchoRep       0
-        DestUnreach   3
-        TimeExceeded 11
-        ParamProblem 12
-        Redirect      5))
-
-(defclass ICMPv6Type [ProtoDict IntEnum]
-  (setv EchoReq      128
-        EchoRep      129
-        DestUnreach    1
-        PacketTooBig   2
-        TimeExceeded   3
-        ParamProblem   4
-        NDRS         133
-        NDRA         134
-        NDNS         135
-        NDNA         136
-        NDRM         137))
-
-
-;;; icmpv4
-
-(defpacket [(IPProto.register IPProto.ICMPv4)] ICMPv4 [ProtoDispatchMixin]
-  [[int type :len 1 :to (normalize it ICMPv4Type)]
-   [int code :len 1]
-   [int cksum :len 2]]
-  [[type 0] [code 0] [cksum 0]]
-
-  (setv disp-whitelist #("type" #("code"))
-        proto-attr "type"
-        proto-dict ICMPv4Type)
-
-  (defn post-build [self]
-    (#super post-build)
-    (when (= self.cksum 0)
-      (setv self.cksum (cksum (+ self.head self.pload))
-            self.head (int-replace self.head 2 2 self.cksum)))))
-
-(defpacket [] ICMPv4Echo []
-  [[int [id seq] :len 2 :repeat 2]]
-  [[id 0] [seq 0]])
-
-(defclass [(ICMPv4Type.register ICMPv4Type.EchoReq)] ICMPv4EchoReq [ICMPv4Echo])
-(defclass [(ICMPv4Type.register ICMPv4Type.EchoRep)] ICMPv4EchoRep [ICMPv4Echo])
-
-(defclass ICMPv4WithPacketMixin []
-  (defn [property] parse-next-class [self] IPv4Error))
-
-(defpacket [] ICMPv4WithPacket [ICMPv4WithPacketMixin]
-  [[int unused :len 4]]
-  [[unused 0]]
-
-  (setv disp-whitelist #()))
-
-(defpacket [] ICMPv4WithPacketPTR [ICMPv4WithPacketMixin]
-  [[int ptr :len 1] [int unused :len 3]]
-  [[ptr 0] [unused 0]]
-
-  (setv disp-whitelist #(#("ptr"))))
-
-(defpacket [] ICMPv4WithPacketAddr [ICMPv4WithPacketMixin]
-  [[struct [addr] :struct (async-name IPv4Addr)]]
-  [[addr IPv4-ZERO]])
-
-(defclass [(ICMPv4Type.register ICMPv4Type.DestUnreach)]  ICMPv4DestUnreach  [ICMPv4WithPacket])
-(defclass [(ICMPv4Type.register ICMPv4Type.TimeExceeded)] ICMPv4TimeExceeded [ICMPv4WithPacket])
-(defclass [(ICMPv4Type.register ICMPv4Type.ParamProblem)] ICMPv4ParamProblem [ICMPv4WithPacketPTR])
-(defclass [(ICMPv4Type.register ICMPv4Type.Redirect)]     ICMPv4Redirect     [ICMPv4WithPacketAddr])
-
-
-;;; icmpv6
-
-(defpacket [(IPProto.register IPProto.ICMPv6)] ICMPv6 [CksumProxySelfMixin ProtoDispatchMixin]
-  [[int type :len 1 :to (normalize it ICMPv6Type)]
-   [int code :len 1]
-   [int cksum :len 2]]
-  [[type 0] [code 0] [cksum 0]]
-
-  (setv disp-whitelist #("type" #("code"))
-        proto-attr "type"
-        proto-dict ICMPv6Type)
-
-  (setv cksum-proto  IPProto.ICMPv6
-        cksum-offset 2))
-
-(defpacket [] ICMPv6Echo []
-  [[int [id seq] :len 2 :repeat 2]]
-  [[id 0] [seq 0]])
-
-(defclass [(ICMPv6Type.register ICMPv6Type.EchoReq)] ICMPv6EchoReq [ICMPv6Echo])
-(defclass [(ICMPv6Type.register ICMPv6Type.EchoRep)] ICMPv6EchoRep [ICMPv6Echo])
-
-(defclass ICMPv6WithPacketMixin []
-  (defn [property] parse-next-class [self] IPv6Error))
-
-(defpacket [] ICMPv6WithPacket [ICMPv6WithPacketMixin]
-  [[int unused :len 4]]
-  [[unused 0]]
-
-  (setv disp-whitelist #()))
-
-(defpacket [] ICMPv6WithPacketMTU [ICMPv6WithPacketMixin]
-  [[int mtu :len 4]]
-  [[mtu 1280]])
-
-(defpacket [] ICMPv6WithPacketPTR [ICMPv6WithPacketMixin]
-  [[int ptr :len 4]]
-  [[ptr 0]])
-
-(defclass [(ICMPv6Type.register ICMPv6Type.DestUnreach)]  ICMPv6DestUnreach  [ICMPv6WithPacket])
-(defclass [(ICMPv6Type.register ICMPv6Type.PacketTooBig)] ICMPv6PacketTooBig [ICMPv6WithPacketMTU])
-(defclass [(ICMPv6Type.register ICMPv6Type.TimeExceeded)] ICMPv6TimeExceeded [ICMPv6WithPacket])
-(defclass [(ICMPv6Type.register ICMPv6Type.ParamProblem)] ICMPv6ParamProblem [ICMPv6WithPacketPTR])
-
-
-;;; ndp
-
-(define-opt-dict ICMPv6NDOpt
-  [SrcAddr 1
-   DstAddr 2
-   Prefix  3
-   RMHead  4
-   MTU     5]
-  [[int type :len 1 :to (normalize it ICMPv6NDOpt)]
-   [varlen data
-    :len 1
-    :len-from (// (+ it 2) 8)
-    :len-to (- (* 8 it) 2)
-    :from (ICMPv6NDOpt.pack type it)
-    :to (ICMPv6NDOpt.unpack type it)]])
-
-(defpacket [(ICMPv6Type.register ICMPv6Type.NDRS)] ICMPv6NDRS [PrintOptsMixin]
-  [[int res :len 4]
-   [struct [opts] :struct (async-name ICMPv6NDOptListStruct)]]
-  [[res 0] [opts #()]]
-
-  (setv disp-whitelist #()))
-
-(defpacket [(ICMPv6Type.register ICMPv6Type.NDRA)] ICMPv6NDRA [PrintOptsMixin]
-  [[int hlim :len 1]
-   [bits [M O res] :lens [1 1 6]]
-   [int routerlifetime :len 2]
-   [int reachabletime :len 4]
-   [int retranstimer :len 4]
-   [struct [opts] :struct (async-name ICMPv6NDOptListStruct)]]
-  [[hlim 0] [M 0] [O 0] [res 0] [routerlifetime 1800]
-   [reachabletime 0] [retranstimer 0] [opts #()]]
-
-  (setv disp-whitelist #(#("hlim") #("M") #("O") #("routerlifetime") #("reachabletime") #("retranstimer"))))
-
-(defpacket [(ICMPv6Type.register ICMPv6Type.NDNS)] ICMPv6NDNS [PrintOptsMixin]
-  [[int res :len 4]
-   [struct [tgt] :struct (async-name IPv6Addr)]
-   [struct [opts] :struct (async-name ICMPv6NDOptListStruct)]]
-  [[res 0] [tgt IPv6-ZERO] [opts #()]]
-
-  (setv disp-whitelist #("tgt")))
-
-(defpacket [(ICMPv6Type.register ICMPv6Type.NDNA)] ICMPv6NDNA [PrintOptsMixin]
-  [[bits [R S O res] :lens [1 1 1 29]]
-   [struct [tgt] :struct (async-name IPv6Addr)]
-   [struct [opts] :struct (async-name ICMPv6NDOptListStruct)]]
-  [[R 0] [S 0] [O 0] [res 0] [tgt IPv6-ZERO] [opts #()]]
-
-  (setv disp-whitelist #(#("R") #("S") #("O") "tgt")))
-
-(defpacket [(ICMPv6Type.register ICMPv6Type.NDRM)] ICMPv6NDRM [PrintOptsMixin]
-  [[int res :len 4]
-   [struct [[tgt] [dst]] :struct (async-name IPv6Addr) :repeat 2]
-   [struct [opts] :struct (async-name ICMPv6NDOptListStruct)]]
-  [[res 0] [tgt IPv6-ZERO] [dst IPv6-ZERO] [opts #()]]
-
-  (setv disp-whitelist #("tgt" "dst")))
-
-(define-atom-struct-opt ICMPv6NDOpt SrcAddr MACAddr)
-(define-atom-struct-opt ICMPv6NDOpt DstAddr MACAddr)
-
-(define-packet-opt ICMPv6NDOpt Prefix []
-  [[int plen :len 1]
-   [bits [L A res1] :lens [1 1 6]]
-   [int validlifetime :len 4]
-   [int preferredtime :len 4]
-   [int res2 :len 4]
-   [struct [prefix] :struct (async-name IPv6Addr)]]
-  [[plen 64] [L 0] [A 0] [res1 0]
-   [validlifetime 0xffffffff] [preferredtime 0xffffffff]
-   [res2 0] [prefix IPv6-ZERO]]
-  (setv disp-whitelist #(#("L") #("A") #("validlifetime") #("preferredtime") "prefix")))
-
-(define-packet-opt ICMPv6NDOpt RMHead []
-  [[int res :len 6]]
-  [[res 0]]
-  (setv disp-whitelist #())
-  (defn [property] parse-next-class [self] IPv6Error))
-
-(define-int-opt ICMPv6NDOpt MTU 6)
-
-
-;;; udp
-
-(defclass UDPService [ProtoDict IntEnum]
-  (setv DNS         53
-        MDNS      5353
-        LLMNR     5355
-        DHCPv4Cli   67
-        DHCPv4Srv   68
-        DHCPv6Cli  546
-        DHCPv6Srv  547))
-
-(defpacket [(IPProto.register IPProto.UDP)] UDP [CksumProxySelfMixin]
-  [[int [src dst] :len 2 :repeat 2]
-   [int len :len 2]
-   [int cksum :len 2]]
-  [[src 0] [dst 0] [len 0] [cksum 0]]
-
-  (setv disp-whitelist #("src" "dst")
-        cksum-proto IPProto.UDP
-        cksum-offset 6)
-
-  (defn [property] parse-next-class [self]
-    (or (.get UDPService self.dst)
-        (.get UDPService self.src)))
-
-  (defn pre-build [self]
-    (#super pre-build)
-    (when (= self.len 0)
-      (setv self.len (+ 8 (len self.pload))))))
-
-
-;;; tcp
-
-(define-opt-dict TCPOpt
-  [EOL    0
-   NOP    1
-   MSS    2
-   WS     3
-   SAckOK 4
-   SAck   5
-   TS     8]
-  [[int type :len 1 :to (normalize it TCPOpt)]
-   [varlen data
-    :len (if (in type #(0 1)) 0 1)
-    :len-from (if (in type #(0 1)) 0 (+ it 2))
-    :len-to (if (in type #(0 1)) 0 (- it 2))
-    :from (TCPOpt.pack type it)
-    :to (TCPOpt.unpack type it)]])
-
-(defpacket [(IPProto.register IPProto.TCP)] TCP [PrintOptsMixin CksumProxySelfMixin]
-  [[int [src dst] :len 2 :repeat 2]
-   [int [seq ack] :len 4 :repeat 2]
-   [bits [dataofs res C E U A P R S F] :lens [4 4 1 1 1 1 1 1 1 1]]
-   [int win :len 2]
-   [int cksum :len 2]
-   [int uptr :len 2]
-   [bytes opts
-    :len (* (- dataofs 5) 4)
-    :from (ipv4-pad-opts (TCPOptListStruct.pack it))
-    :to (get (TCPOptListStruct.unpack it) 0)]]
-  [[src 0] [dst 0] [seq 0] [ack 0] [dataofs 0]
-   [res 0] [C 0] [E 0] [U 0] [A 0] [P 0] [R 0] [S 0] [F 0]
-   [win 8192] [cksum 0] [uptr 0] [opts #()]]
-
-  (setv disp-whitelist
-        #("src" "dst" #("seq") #("ack")
-                #("C") #("E") #("U") #("A") #("P") #("R") #("S") #("F")
-                "win" #("uptr"))
-        cksum-proto IPProto.TCP
-        cksum-offset 16)
-
-  (defn post-build [self]
-    (#super post-build)
-    (when (= self.dataofs 0)
-      (setv self.dataofs (// (len self.head) 4)
-            self.head (int-replace self.head 12 1 (+ (<< self.dataofs 4) self.res))))))
-
-(define-int-opt TCPOpt MSS 2)
-(define-int-opt TCPOpt WS  1)
-
-(define-atom-struct-opt TCPOpt SAck
-  [int edges :len 4 :repeat-while (async-wait (.peek reader))])
-
-(define-struct-opt TCPOpt TS
-  [[int [tsval tsecr] :len 4 :repeat 2]])
+(defpacket [] Ether [ProtoDispatchMixin]
+  [[struct [[dst] [src]] :struct (async-name MACAddr) :repeat 2]
+   [int type :len 2 :to (normalize it EtherType)]]
+  [[dst MAC-ZERO] [src MAC-ZERO] [type 0]]
+
+  (setv proto-attr "type"
+        proto-dict EtherType))

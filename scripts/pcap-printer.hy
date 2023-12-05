@@ -3,8 +3,8 @@
 
 (import
   hiolib.rule *
-  hpacket
-  hpacket [IndentPrinter]
+  hpacket.packet
+  hpacket.packet [IndentPrinter]
   hpacket.inet *
   hpacket.pcap *)
 
@@ -13,7 +13,7 @@
                           ["-v" "--verbose" :action "store_true" :default False]
                           ["input"]])]
     (when args.debug
-      (setv hpacket.debug True))
+      (setv hpacket.packet.debug True))
     (with [f (open args.input "rb")]
       (let [reader (Pcap.reader f)
             printer (IndentPrinter :char " " :indent 1 :step 2)]

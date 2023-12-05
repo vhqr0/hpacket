@@ -33,8 +33,8 @@
   (setv disp-whitelist None
         disp-blacklist None)
 
-  (defn disp-attr-match-p [self attr pred-list default-pred]
-    (for [rule pred-list]
+  (defn disp-attr-is-match [self attr rule-list default-pred]
+    (for [rule rule-list]
       (ebranch (isinstance rule it)
                str   (when (= attr rule)
                        (break))
@@ -49,12 +49,12 @@
         (return False)))
     (return True))
 
-  (defn disp-attr-valid-p [self attr]
+  (defn disp-attr-is-valid [self attr]
     (unless (is self.disp-whitelist None)
-      (unless (.disp-attr-match-p self attr self.disp-whitelist bool)
+      (unless (.disp-attr-is-match self attr self.disp-whitelist bool)
         (return False)))
     (unless (is self.disp-blacklist None)
-      (when (.disp-attr-match-p self attr self.disp-blacklist (fn [x] (not x)))
+      (when (.disp-attr-is-match self attr self.disp-blacklist (fn [x] (not x)))
         (return False)))
     (return True))
 
@@ -62,7 +62,7 @@
     (raise NotImplementedError))
 
   (defn [property] disp-attrs [self]
-    (filter self.disp-attr-valid-p self.disp-all-attrs))
+    (filter self.disp-attr-is-valid self.disp-all-attrs))
 
   (defn [property] disp-formatted-attrs [self]
     (gfor attr self.disp-attrs
@@ -83,6 +83,8 @@
     (with [_ printer]
       (.disp-print-attrs self printer))))
 
+
+
 (defclass Packet [DispMixin]
   (setv struct None)
 
@@ -98,14 +100,18 @@
     (setv self.last-packet.next-packet next-packet)
     self)
 
-  (defn #-- getitem [self packet-class]
-    (cond (isinstance self packet-class)
-          self
-          self.next-packet
-          (get self.next-packet packet-class)))
+  (defn #-- getitem [self i]
+    (cond (isinstance i int)
+          (cond (= i 0) self
+                (and (> i 0) self.next-packet) (get self.next-packet (- i 1))
+                True (raise IndexError))
+          (isinstance i type)
+          (cond (isinstance self i) self
+                self.next-packet (get self.next-packet i)
+                True (raise KeyError))))
 
-  (defn #-- contains [self packet-class]
-    (bool (get self packet-class)))
+  (defn #-- contains [self i]
+    (bool (get self i)))
 
   (defn [property] disp-all-attrs [self]
     self.struct.names)

@@ -1,14 +1,9 @@
 (require
-  hiolib.rule :readers * *
-  hiolib.struct *
-  hpacket *
-  hpacket.inet.inet *)
+  hpacket.inet.inet :readers * *)
 
 (import
-  enum [IntEnum]
-  hiolib.struct *
-  hpacket *
-  hpacket.inet.inet *)
+  hpacket.inet.inet *
+  hpacket.inet.udp *)
 
 (defclass DNSType [OptDict IntEnum]
   (setv CNAME   5
@@ -84,7 +79,7 @@
     :from (DNSType.pack type it)
     :to (DNSType.unpack type it)]])
 
-(defpacket [(UDPService.register UDPService.DNS UDPService.MDNS UDPService.LLMNR)] DNS []
+(defpacket [(UDPPort.register UDPPort.DNS UDPPort.MDNS UDPPort.LLMNR)] DNS []
   [[int id :len 2]
    [bits [qr op aa tc rd ra z rcode] :lens [1 4 1 1 1 1 3 4]]
    [int qdcount :len 2]
